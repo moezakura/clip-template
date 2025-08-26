@@ -32,7 +32,7 @@ sudo dnf install gcc-c++ cmake qt5-qtbase-devel yaml-cpp-devel libX11-devel libX
 
 ```bash
 # リポジトリをクローン
-git clone https://github.com/yourusername/clip-template.git
+git clone https://github.com/moezakura/clip-template.git
 cd clip-template
 
 # ビルドディレクトリを作成
