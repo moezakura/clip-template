@@ -5,6 +5,9 @@
 #include <QApplication>
 #include <QDesktopWidget>
 #include <QTimer>
+#include <QClipboard>
+#include <QMimeData>
+#include <QDebug>
 
 // X11 headers must be included after Qt headers to avoid conflicts
 #include <X11/Xlib.h>
@@ -25,6 +28,17 @@ MainWindow::MainWindow(QWidget *parent)
     setupShortcuts();
     loadTemplates();
     rememberActiveWindow();
+
+    // Setup clipboard monitoring and quit timer (for safe restoration on X11 without managers)
+    m_quitTimer = new QTimer(this);
+    m_quitTimer->setSingleShot(true);
+    connect(m_quitTimer, &QTimer::timeout, []() {
+        qDebug() << "[clip-template] Quit timer elapsed; exiting.";
+        QApplication::quit();
+    });
+
+    QClipboard *cb = QApplication::clipboard();
+    connect(cb, &QClipboard::changed, this, &MainWindow::onClipboardChanged);
 }
 
 MainWindow::~MainWindow() = default;
@@ -175,17 +189,51 @@ void MainWindow::copyAndPaste()
     int currentRow = m_templateList->currentRow();
     if (currentRow >= 0 && currentRow < static_cast<int>(m_filteredTemplates.size())) {
         const Template &tmpl = m_filteredTemplates[currentRow];
-        
+
+        // Remember current clipboard data to restore later
+        QClipboard *clipboard = QApplication::clipboard();
+        const QMimeData *orig = clipboard->mimeData(QClipboard::Clipboard);
+        if (m_savedClipboardData) {
+            delete m_savedClipboardData;
+            m_savedClipboardData = nullptr;
+        }
+        if (orig) {
+            m_savedClipboardData = new QMimeData();
+            const QStringList formats = orig->formats();
+            for (const QString &fmt : formats) {
+                m_savedClipboardData->setData(fmt, orig->data(fmt));
+            }
+            qDebug() << "[clip-template] Saved clipboard formats:" << formats;
+        } else {
+            qDebug() << "[clip-template] No original clipboard data present.";
+        }
+
         // Copy to clipboard
         m_clipboardHandler->copyToClipboard(tmpl.content);
-        
+        qDebug() << "[clip-template] Set clipboard to template (length)" << (int)tmpl.content.size();
+
         // Hide window
         hide();
-        
+
         // Restore focus to previous window and paste
         QTimer::singleShot(100, [this]() {
             m_clipboardHandler->pasteToWindow(m_previousWindow);
-            QApplication::quit();
+            // After paste keystrokes are sent, restore clipboard data shortly after
+            QTimer::singleShot(150, [this]() {
+                QClipboard *cb = QApplication::clipboard();
+                if (m_savedClipboardData) {
+                    m_ignoreNextClipboardChange = true; // ignore our own change signal
+                    qDebug() << "[clip-template] Restoring previous clipboard data.";
+                    cb->setMimeData(m_savedClipboardData, QClipboard::Clipboard); // ownership transferred
+                    m_savedClipboardData = nullptr;
+                    // Monitor for changes and quit when someone else takes over, or timeout
+                    m_monitorClipboard = true;
+                    m_quitTimer->start(10000); // 10s safety timeout
+                } else {
+                    qDebug() << "[clip-template] No saved clipboard data to restore; exiting.";
+                    QApplication::quit();
+                }
+            });
         });
     }
 }
@@ -263,4 +311,19 @@ void MainWindow::handleNumberKey(int number)
             break;
         }
     }
+}
+
+void MainWindow::onClipboardChanged(QClipboard::Mode mode)
+{
+    if (mode != QClipboard::Clipboard) return;
+    if (!m_monitorClipboard) return;
+    if (m_ignoreNextClipboardChange) {
+        // This change was caused by our own restore
+        m_ignoreNextClipboardChange = false;
+        qDebug() << "[clip-template] Clipboard changed (self-restore). Monitoring for external change.";
+        return;
+    }
+
+    qDebug() << "[clip-template] Clipboard changed by external owner; exiting.";
+    QApplication::quit();
 }

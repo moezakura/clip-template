@@ -6,6 +6,7 @@
 #include <QLineEdit>
 #include <QVBoxLayout>
 #include <QShortcut>
+#include <QClipboard>
 #include <memory>
 #include <vector>
 #include "templatemanager.h"
@@ -28,6 +29,7 @@ private slots:
     void onSearchTextChanged(const QString &text);
     void onEscapePressed();
     void handleNumberKey(int number);
+    void onClipboardChanged(QClipboard::Mode mode);
 
 private:
     void setupUI();
@@ -44,6 +46,12 @@ private:
     std::vector<Template> m_templates;
     std::vector<Template> m_filteredTemplates;
     Window m_previousWindow;
+
+    // Clipboard restore support
+    QMimeData *m_savedClipboardData = nullptr; // owned until restored via setMimeData
+    bool m_monitorClipboard = false;
+    bool m_ignoreNextClipboardChange = false;
+    QTimer *m_quitTimer = nullptr;
 };
 
 #endif // MAINWINDOW_H
